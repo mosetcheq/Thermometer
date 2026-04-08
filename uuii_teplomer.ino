@@ -248,6 +248,7 @@ void loop() {
     for(c = 0; c < numSensors; c++) {
       payload+= "{\"sensor\": \"DS18B20\", \"sensor_id\": \"" + getHexAddress(thermometer[c]) + "\", \"type\": \"temperature\", \"value\": " + String(temperatures[c]) + "},\n";
     }
+    payload+= "{\"sensor\": \"ESP8266\", \"sensor_id\": \"1\", \"type\": \"signal\", \"value\": " + String(WiFi.RSSI()) + "},\n";
     payload+= "{\"uptime\": " + String(millis()) + "}]";
 
     http.begin(network, configURL);
@@ -295,7 +296,7 @@ void writeInt(uint8_t pos, int number, bool zeroes) {
     pos = writeDigit(pos, num);
     number = number - (num * 10);
   } else {
-    pos = pos + 4;
+    pos = writeSign(pos, false);
   }
   num = number;
   pos = writeDigit(pos, num);

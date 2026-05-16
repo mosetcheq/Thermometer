@@ -5,6 +5,7 @@
 #include <SD.h>
 #include <LiquidCrystal_I2C.h>
 
+#include <EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
@@ -17,11 +18,19 @@ DallasTemperature sensors (&oneWire);
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 File configTxt;
 
+// konfigurace
+struct {
+  char SSID[48] = "";
+  char password[48] = "";
+  char apiKey[48] = "";
+  char URL[48] = "";
+} config;
+
 // nastaveni pro posilani do cloudu
-char configSSID[64] = "";
-char configPassword[64] = "";
-char configApiKey[64] = "";
-char configURL[64] = "";
+char configSSID[48] = "";
+char configPassword[48] = "";
+char configApiKey[48] = "";
+char configURL[48] = "";
 
 //  definice segmentu pro LCD displej
 byte segments[6][8] = {
@@ -59,7 +68,7 @@ byte chars[10][16] = {
   {0, 2, 2, 4,  1, 3, 3, 4,  32, 32, 32, 4,  3, 3, 3, 4} // 9
 };
 
-int c, numSensors = 0, displayMode = 0, hh = 88, mm = 88;
+int c, numSensors = 0, displayMode = 0, hh = 88, mm = 88, lastWiFiStatus = 0;
 bool light = true, wifiMode = false;
 DeviceAddress thermometer[8];
 float temperatures[8];
@@ -73,8 +82,9 @@ void setup() {
   // put your setup code here, to run once:
 
   pinMode(BUTTON_GPIO, INPUT_PULLUP);
-
   Wire.begin();
+  EEPROM.begin(sizeof(config));
+
   Serial.begin(19200);
   Serial.println("");
 
@@ -91,8 +101,15 @@ void setup() {
   lcd.setCursor(0, 1);
 
   if(!SD.begin(15)) {
-    lcd.print("Chyba cteni karty");
-    delay(2000);
+    EEPROM.get(0, config);
+
+    Serial.println(config.SSID);
+    Serial.println(config.URL);
+    Serial.println(config.apiKey);
+
+    if(config.SSID != "") {
+      wifiMode = true;
+    }
   } else {
     lcd.print("Karta nactena");
 
@@ -101,8 +118,11 @@ void setup() {
       configTxt = SD.open("config.txt");
       readConfiguration(configTxt);
       configTxt.close();
+      EEPROM.put(0, config);
+      EEPROM.commit();
     
     } else {
+      // inicializace nove vlozene karty - vytvoreni sablony konfiguracniho souboru / ulozeni stavajici konfigurace
       lcd.clear();
       lcd.home();
                 
@@ -115,10 +135,24 @@ void setup() {
       lcd.print("kartu a restartujte.");
 
       configTxt = SD.open("config.txt", FILE_WRITE);
-      configTxt.println("WIFI");
-      configTxt.println("");
-      configTxt.println("URL");
-      configTxt.println("KEY");
+      if(config.SSID != "") {
+        // pokud mame konfiguraci ve flash pameti, ulozime ji na SD kartu
+        configTxt.println("WIFI");
+        configTxt.println(config.SSID);
+        configTxt.println(config.password);
+        configTxt.println("");
+        configTxt.println("URL");
+        configTxt.println(config.URL);
+        configTxt.println("");
+        configTxt.println("KEY");
+        configTxt.println(config.apiKey);
+
+      } else {
+        configTxt.println("WIFI");
+        configTxt.println("");
+        configTxt.println("URL");
+        configTxt.println("KEY");
+      }
       configTxt.close();
 
       delay(10000);
@@ -132,14 +166,22 @@ void setup() {
     lcd.clear();
     lcd.home();
             
+    /*
     lcd.print("Pripojuji k WIFI");
     lcd.setCursor(0, 1);
     lcd.print("SSID: ");
     lcd.print(configSSID);
     lcd.setCursor(0, 2);
+    */
 
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(configSSID, configPassword);
+    if(config.SSID != "") {
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(config.SSID, config.password);
+      WiFi.setAutoReconnect(true);
+      WiFi.setAutoConnect(true);
+    }
+
+    /*
     c = 0;
     while(WiFi.status() != WL_CONNECTED) {
       if(c == 20) {
@@ -152,6 +194,7 @@ void setup() {
       lcd.write(255);
       delay(500);
     }
+
     int percentage = map(WiFi.RSSI(), -100, -50, 0, 100);
     lcd.setCursor(0, 2);
     lcd.print("Pripojeno           ");
@@ -162,6 +205,7 @@ void setup() {
     lcd.print("IP: ");
     lcd.print(WiFi.localIP());
     delay(2000);
+    */
   }
 
   sensors.begin();
@@ -179,7 +223,52 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
 
+  if(lastWiFiStatus != WiFi.status()) {
+    lastWiFiStatus = WiFi.status();
+    light = true;
+    timer = millis();
+    lcd.backlight();
+    lcd.clear();
 
+    Serial.println(lastWiFiStatus);
+
+    if(lastWiFiStatus == WL_CONNECTED) {
+      int percentage = map(WiFi.RSSI(), -100, -50, 0, 100);
+      lcd.setCursor(0, 1);
+      lcd.print("Pripojeno           ");
+      lcd.setCursor(10,1);
+      lcd.print(percentage);
+      lcd.print('%');
+      lcd.setCursor(0, 2);
+      lcd.print("IP: ");
+      lcd.print(WiFi.localIP());
+      delay(2000);
+    }
+
+    if(lastWiFiStatus == WL_CONNECTION_LOST) {
+      lcd.setCursor(0, 1);
+      lcd.print("Spojeni ztraceno    ");
+      delay(2000);
+    }
+
+    if(lastWiFiStatus == WL_NO_SSID_AVAIL) {
+      lcd.setCursor(0, 1);
+      lcd.print("WIFI mimo dosah     ");
+      delay(2000);
+    }
+
+    if(lastWiFiStatus == 7) {
+      lcd.setCursor(0, 1);
+      lcd.print("WIFI odpojena       ");
+      delay(2000);
+    }
+
+    lcd.clear();
+
+  }
+
+
+  // test tlacitka - debounce nastaveno na interval 0.5 sec
   if(!digitalRead(2) && (millis() - debounce > 500)) {
     int range = millis() - timer;
     debounce = timer = millis();
@@ -199,16 +288,18 @@ void loop() {
     }
   }
 
+  // zhasinani displeje - nastaveno na 60 sekund
   if((millis() - timer > 60000) && light) {
     light = false;
     lcd.noBacklight();
   }
 
 
+  // cteni dat ze teplomeru - kazdych 5 sekund
   if(millis() - sensorRead > 5000) {
     sensorRead = millis();
     lcd.setCursor(19, 1);
-    lcd.write(127);
+    lcd.write(127); // zobrazi na displeji sipku kdyz se nacitaji data ze sensoru
 
     // nacteni teplot ze senzoru
     sensors.requestTemperatures();
@@ -238,8 +329,8 @@ void loop() {
     }
   }
 
-
-  if((millis() - sending > 30000) && wifiMode) {
+  // odesilani dat kazdych 30 sekund
+  if((millis() - sending > 30000) && wifiMode && WiFi.isConnected()) {
     sending = millis();
     lcd.setCursor(19, 2);
     lcd.write(126);
@@ -251,9 +342,9 @@ void loop() {
     payload+= "{\"sensor\": \"ESP8266\", \"sensor_id\": \"1\", \"type\": \"signal\", \"value\": " + String(WiFi.RSSI()) + "},\n";
     payload+= "{\"uptime\": " + String(millis()) + "}]";
 
-    http.begin(network, configURL);
+    http.begin(network, config.URL);
     http.addHeader("Content-Type", "application/json");
-    http.addHeader("Device-Key", configApiKey);
+    http.addHeader("Device-Key", config.apiKey);
     int responseCode = http.POST(payload);
     Serial.println(responseCode);
     if(responseCode == 200) {
@@ -268,6 +359,8 @@ void loop() {
   }
 
 }
+
+
 
 // vypise cislo
 void writeNumber(uint8_t pos, float number) {
@@ -360,29 +453,29 @@ String getHexAddress(DeviceAddress param) {
 
 
 // Nacitani konfiguracniho souboru z SD kcharty
-void readConfiguration(File config) {
+void readConfiguration(File configFile) {
   String cLine = "";
-  while(config.available()) {
-    cLine = readLine(config);
+  while(configFile.available()) {
+    cLine = readLine(configFile);
 
     if(cLine == String("WIFI")) {
-        cLine = readLine(config);
-        cLine.toCharArray(configSSID, cLine.length() + 1);
+        cLine = readLine(configFile);
+        cLine.toCharArray(config.SSID, cLine.length() + 1);
 
-        cLine = readLine(config);
-        cLine.toCharArray(configPassword, cLine.length() + 1);
+        cLine = readLine(configFile);
+        cLine.toCharArray(config.password, cLine.length() + 1);
     }
   
     if(cLine == String("URL")) {
-        cLine = readLine(config);
-        cLine.toCharArray(configURL, cLine.length() + 1);
+        cLine = readLine(configFile);
+        cLine.toCharArray(config.URL, cLine.length() + 1);
         wifiMode = true;
 
     }
  
     if(cLine == String("KEY")) {
-        cLine = readLine(config);
-        cLine.toCharArray(configApiKey, cLine.length() + 1);
+        cLine = readLine(configFile);
+        cLine.toCharArray(config.apiKey, cLine.length() + 1);
     }
   }
 }

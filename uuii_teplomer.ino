@@ -1,6 +1,16 @@
+/*
+#define SHT 21
+*/
+
 #include <Wire.h>
 #include <OneWire.h>
+
 #include <DallasTemperature.h>
+
+#ifdef SHT
+#include <SHT2x.h>
+#endif
+
 #include <SPI.h>
 #include <SD.h>
 #include <LiquidCrystal_I2C.h>
@@ -78,12 +88,19 @@ long timer = 0, sensorRead = 0, sending = 0, debounce = 0;
 WiFiClient network;
 HTTPClient http;
 
+#ifdef SHT
+SHT2x sht;
+#endif
+
 void setup() {
   // put your setup code here, to run once:
 
   pinMode(BUTTON_GPIO, INPUT_PULLUP);
   Wire.begin();
   EEPROM.begin(sizeof(config));
+  #if SHT == 1
+  sht.begin();
+  #endif;
 
   Serial.begin(19200);
   Serial.println("");
@@ -306,7 +323,11 @@ void loop() {
     for(c = 0; c < numSensors; c++) {
       temperatures[c] = sensors.getTempCByIndex(c);
     }
-  
+
+    #ifdef SHT
+      sht.read();
+    #endif
+
     lcd.setCursor(19, 1);
     lcd.write(32);
 
@@ -340,6 +361,10 @@ void loop() {
       payload+= "{\"sensor\": \"DS18B20\", \"sensor_id\": \"" + getHexAddress(thermometer[c]) + "\", \"type\": \"temperature\", \"value\": " + String(temperatures[c]) + "},\n";
     }
     payload+= "{\"sensor\": \"ESP8266\", \"sensor_id\": \"1\", \"type\": \"signal\", \"value\": " + String(WiFi.RSSI()) + "},\n";
+    #ifdef SHT
+    payload+= "{\"sensor\": \"SHT21\", \"sensor_id\": \"0x1\", \"type\": \"temperature\", \"value\": " + String(sht.getTemperature()) + "},\n";
+    payload+= "{\"sensor\": \"SHT21\", \"sensor_id\": \"0x2\", \"type\": \"humidity\", \"value\": " + String(sht.getHumidity()) + "},\n";
+    #endif
     payload+= "{\"uptime\": " + String(millis()) + "}]";
 
     http.begin(network, config.URL);
